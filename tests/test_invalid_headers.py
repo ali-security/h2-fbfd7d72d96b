@@ -43,6 +43,11 @@ class TestInvalidFrameSequences:
         [*base_request_headers, ("transfer-encoding", "gzip")],
         [*base_request_headers, ("upgrade", "super-protocol/1.1")],
         [*base_request_headers, ("te", "chunked")],
+        [*base_request_headers, ("host", "example.com"), ("host", "evil.example.com")],
+        [*base_request_headers, ("host", "evil.example.com"), ("host", "example.com")],
+        [*[header for header in base_request_headers
+           if header[0] != ":authority"],
+         ("host", "example.com"), ("host", "evil.example.com")],
         [*base_request_headers, ("host", "notexample.com")],
         [*base_request_headers, (" name", "name with leading space")],
         [*base_request_headers, ("name ", "name with trailing space")],
@@ -530,6 +535,55 @@ class TestFilter:
         assert headers == list(h2.utilities.validate_headers(
             headers, hdr_validation_flags,
         ))
+
+    @pytest.mark.parametrize("validation_function", validation_functions)
+    @pytest.mark.parametrize(
+        "hdr_validation_flags", hdr_validation_request_headers_no_trailer,
+    )
+    @pytest.mark.parametrize(
+        "headers",
+        (
+            # No :authority header, two Host headers.
+            [
+                (b":path", b"/"),
+                (b":scheme", b"https"),
+                (b":method", b"GET"),
+                (b"host", b"example.com"),
+                (b"host", b"evil.example.com"),
+            ],
+            # :authority plus two Host headers, the last of which matches
+            # the :authority header.
+            [
+                (b":authority", b"example.com"),
+                (b":path", b"/"),
+                (b":scheme", b"https"),
+                (b":method", b"GET"),
+                (b"host", b"evil.example.com"),
+                (b"host", b"example.com"),
+            ],
+            # :authority plus two identical Host headers.
+            [
+                (b":authority", b"example.com"),
+                (b":path", b"/"),
+                (b":scheme", b"https"),
+                (b":method", b"GET"),
+                (b"host", b"example.com"),
+                (b"host", b"example.com"),
+            ],
+        ),
+    )
+    def test_multiple_host_headers(self,
+                                   validation_function,
+                                   hdr_validation_flags,
+                                   headers) -> None:
+        """
+        A request header block that contains more than one Host header is
+        rejected, whether or not an :authority header is also present.
+        """
+        with pytest.raises(
+            h2.exceptions.ProtocolError, match="multiple Host headers",
+        ):
+            list(validation_function(headers, hdr_validation_flags))
 
     @pytest.mark.parametrize(
         "hdr_validation_flags", hdr_validation_response_headers,
